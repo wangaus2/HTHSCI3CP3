@@ -1,0 +1,154 @@
+---
+title: "GSEA_GO"
+author: "Jianhan"
+date: "2025-02-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Set up your R environment by downloading the clusterProfiler and the org.Mm.eg.db or org.Hs.eg.db package from BioConductor. Also load the dplyr package for working with dataframes.
+
+```{r include=FALSE}
+options(warn = -1) 
+BiocManager::install('clusterProfiler')
+library(clusterProfiler)
+library(dplyr)
+
+```
+
+Load your dataframe of differentially expressed genes. I have it saved in .csv format, so I'm using read.csv(). Keep columns with your fold change, p value, adj p value, and gene symbol information. Remove genes with NA p value or duplicated gene names.
+```{r DEG analysis output}
+res_ordered = read.delim('res_ordered.txt', header = T) #Modify based on your result file
+res_ordered = res_ordered[, grep('FoldChange|pvalue|adj|ENTREZ|SYMBOL', colnames(res_ordered))] #Modify based on the columns in your file
+colnames(res_ordered)[grep('SYMBOL', colnames(res_ordered))] = 'symbol' #Optional: you might want to change some column names to a simpler name
+res_ordered = res_ordered[!is.na(res_ordered$pvalue) & !is.na(res_ordered$padj) & !duplicated(res_ordered$symbol), ]
+head(res_ordered)
+
+```
+
+Separate your dataframe in two based on the direction of fold change (i.e. positive fold change in one dataframe, negative fold change in another dataframe). Then create another dataframe keeping significant genes only.
+
+```{r Separate DEG file}
+up = subset(res_ordered, log2FoldChange > 0)
+down = subset(res_ordered, log2FoldChange < 0)
+
+up_sig = up[up$padj <= 0.05, ]
+down_sig = down[down$padj <= 0.05, ]
+
+message('There are ', nrow(up), ' upregulated genes, ', nrow(up_sig), ' of which are significant at p adj <= 0.05')
+message('There are ', nrow(down), ' downregulated genes, ', nrow(down_sig), ' of which are significant at p adj <= 0.05')
+
+```
+We will now perform gene ontology (GO) analysis. GO is an 'over-representation' analysis  that aims to categorize and annotate genes based on their biological roles. These roles are defined by curated gene-sets in three major domains (molecular function (MF), biological process (BP), and cellular component (CC)). Each gene-set, as the name implies, contain a set of genes. GO analysis uses the Fisher's exact test to compare the proportion of your significant up and down-regulated genes that belong to a gene-set relative to the proportion of all genes in the genome that belong to the same gene-set. For example, if 10 out of your 100 significantly up-regulated genes match to the term 'cell division', that would be a proportion of 0.1. This is compared to the number of genes in the entire genome that match to the term 'cell division'. This might be 1,000 out of 20,000 genes, which returns a proportion of 0.05. A hypergeometric test (such as the Fisher's exact test) can then test the significance of observing a proportion of 0.1 > the baseline proportion of 0.05. 
+
+```{r GO}
+#For each of up and down-regulated gene sets, assess biological process, molecular function, and cellular component
+#First compile up_sig and down_sig in a list for efficient processing
+sig_list = list(up = up_sig, down = down_sig)
+
+#Then use lapply to loop through both set of genes in your list and then loop through all 3 GO analysis
+go_res = lapply(sig_list, function(i) {
+  
+  res = lapply(c('BP', 'MF' ,'CC'), function(x) {
+    message(paste0('Analyzing ', x))
+    enrichGO(i$ENTREZID,
+             OrgDb = org.Mm.eg.db, #If human, use org.Hs.eg.db
+             keyType = 'ENTREZID',
+             ont = x,
+             readable = F) 
+  }) %>% setNames(c('BP', 'MF', 'CC'))
+  
+})
+
+#Check out the result, change the max.level around to efficiently inspect different layers of the output data
+str(go_res, max.level = 2)
+str(go_res$up, max.level = 3)
+str(go_res$up$BP, max.level = 2)
+str(go_res$up$BP@result, max.level = 2)
+
+#Create a subset of your analysis with significant results only and save results
+go_sig = lapply(c('up', 'down'), function(y) {
+  
+  i = go_res[[y]]
+  
+  sig = lapply(c('BP', 'MF', 'CC'), function(x) {
+    
+    df = subset(i[[x]]@result, p.adjust <= 0.05) 
+    #Save only if there are significant results
+    if (nrow(df) > 1) write.table(df, paste0(y, '_GO', x, '_sig.txt'), col.names = TRUE, row.names = TRUE, quote = FALSE, sep = '\t') 
+    return(df)
+    
+  }) %>% setNames(c('BP', 'MF', 'CC'))
+  
+}) %>% setNames(c('up', 'down'))
+
+#How many significant GO terms are reported for each of BP, MF, CC? Compile this summary level data into a table where rows correspond to 'up', and 'down' regulated genes, and columns correspond to the 3 GO analysis. Here I will use a more traditional for loop method instead of lapply. Challenge yourself by translating this using lapply.
+go_summary = data.frame(matrix(0, ncol = 3, nrow = 2))
+rownames(go_summary) = c('up', 'down')
+colnames(go_summary) = c('BP', 'MF', 'CC')
+for (y in c('up', 'down')) {
+  i = go_sig[[y]]
+  for (n in c('BP', 'MF', 'CC')) {
+    x = i[[n]]
+    message(paste0(nrow(x),' GO BP terms are over-represented among ', y, '-regulated genes'))
+    go_summary[y, n] = nrow(x)
+  }
+}
+go_summary
+write.table(go_summary, 'go_summary.txt', col.names = TRUE, row.names = TRUE, quote = FALSE, sep = '\t') #Save results
+
+```
+
+Next, we will perform GSEA analysis. GSEA is similar to GO in the general sense that it seeks to determine enrichment of curated gene sets. However, GSEA uses all genes instead of just ones that are significant. This increases statistical power, and reduce bias of detection. The curated gene sets used by GSEA is conveniently stored in MsigDB which is an online database. We can download all the gene sets collections from the MSigDB website: https://www.gsea-msigdb.org/gsea/msigdb/mouse/collections.jsp. On the webpage you will notice for each row of the collection, there is an option to 'Download GMT Files'. Download the Gene Symbols file by right clicking 'Gene Symbols' underneath Download GMT Files. Note that you will need to first register for a free account on MSigDB and login.
+
+```{r download gmt files}
+#Go to MSigDb and download GMT file, make sure to know where your download is!
+#Load .gmt file
+hallmark = read.gmt('./mh.all.v2024.1.Mm.symbols.gmt') #Change this if using other gene set collections
+
+#Inspect .gmt file
+str(hallmark)
+table(hallmark$term) %>% head()
+
+```
+Our input data for GSEA is a named vector where names are the gene identifiers matching with that in your .gmt file and the vector is the rank metric. A common rank metric for GSEA applies log() transformation to p-value such that genes with small p-value return higher log(p) than genes with larger p-values. We will annotate this rank with + and - signs based on the direction of fold change.
+
+```{r rank genes}
+res_ordered = res_ordered %>% 
+  mutate(rank = ifelse(.$log2FoldChange > 0, -log(.$pvalue), log(.$pvalue)))
+
+rank = res_ordered$rank 
+names(rank) = res_ordered$symbol
+rank = rank[order(rank, decreasing = T)]
+head(rank)
+
+#Convert rank to a dataframe and export to a file
+rank_df = data.frame(SYMBOL = names(rank), RANK = as.vector(rank))
+head(rank_df)
+write.table(rank_df, 'rank.txt', col.names = TRUE, row.names = FALSE, sep = '\t')
+
+```
+Now we are ready to run GSEA:
+
+```{r GSEA}
+
+h = GSEA(rank, TERM2GENE = hallmark)
+str(h, max.level = 2) #inspect the output
+head(h@result)
+
+#Split to positive and negative enrichment
+h_up = subset(h, h$NES > 0)
+head(h_up)
+write.table(h_up, 'up_GSEA_hallmark.txt',  col.names = TRUE, row.names = TRUE, quote = FALSE, sep = '\t')
+h_down = subset(h, h$NES < 0)
+head(h_down)
+write.table(h_down, 'down_GSEA_hallmark.txt',  col.names = TRUE, row.names = TRUE, quote = FALSE, sep = '\t')
+```
+
+That's a wrap on the basics of GO and GSEA. MSigDb provides an abundance of other gene sets ready for tests on their website. Please prepare additional results using gene sets relevant to your study. 
+
+Additionally, I encourage you to explore this website: https://yulab-smu.top/biomedical-knowledge-mining-book/ for more tutorials on using the clusterprofiler package. You will find many different variations of gene set analyses and importantly, visualization of your enrichment results (https://yulab-smu.top/biomedical-knowledge-mining-book/enrichplot.html). 
+

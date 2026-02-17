@@ -3,7 +3,8 @@ if (!require("BiocManager", quietly = TRUE))
 BiocManager::install("DESeq2", force=TRUE)
 BiocManager::install("apeglm")
 BiocManager::install("vsn")
-
+BiocManager::install('clusterProfiler')
+BiocManager::install("org.hs.eg.db")
 cran_packages <- c(
   "dplyr",
   "pheatmap",
