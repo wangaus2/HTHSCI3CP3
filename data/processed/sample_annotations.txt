@@ -1,0 +1,17 @@
+condition	cell_line
+Control	M1
+Control	M2
+Control	M3
+Control	P1
+Control	P2
+Control	P3
+Control	P4
+Control	P5
+Treatment	M1
+Treatment	M2
+Treatment	M3
+Treatment	P1
+Treatment	P2
+Treatment	P3
+Treatment	P4
+Treatment	P5

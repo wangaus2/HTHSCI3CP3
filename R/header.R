@@ -1,8 +1,0 @@
-library(DESeq2)
-library(apeglm)
-library(vsn)
-library(here)
-library(ggplot2)
-library(dplyr)
-library(pheatmap)
-library(apeglm)
