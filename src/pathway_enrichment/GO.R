@@ -4,7 +4,7 @@
     setwd(here())
     resfilter <- read.csv("results/DESeq/tables/DESeqResFiltered.csv")
     res <- read.csv("results/DESeq/tables/DESeqRes.csv")
-    gene_ids <- res$gene_id
+    gene_ids <- as.character(res$gene_id)
      up <- subset(resfilter, logFC < 0)$gene_id
     down <- subset(resfilter, logFC > 0)$gene_id
     

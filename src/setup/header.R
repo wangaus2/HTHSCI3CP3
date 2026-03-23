@@ -6,7 +6,9 @@ bioconductor_packages <- c(
   "vsn",
   "apeglm",
   "DESeq2",
-  "org.Hs.eg.db"
+  "org.Hs.eg.db",
+  "GSVA",
+  "UCSCXenaTools"
 )
 cran_packages <- c(
   "dplyr",
